@@ -1,0 +1,6 @@
+Stage,Experiment,Operations,Bootstrap Count,Execution/Bootstrap Time,Maximum Absolute Error
+Stage 4,No Bootstrapping,4,0,0.26649,1.513652e-15
+Stage 4,Fixed Bootstrapping,4,1,1.485345,9.648271e-16
+Stage 4,Adaptive Bootstrapping,4,2,2.594903,1.865892e-15
+Stage 6,Adaptive Bootstrap,6,2,2.759992,
+Stage 6,Accuracy Validation,2,1,1.883093,1.291041e-15

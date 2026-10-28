@@ -1,0 +1,4 @@
+Experiment,Operations,Bootstrap Count,Bootstrap Time,Maximum Absolute Error
+Stage 6.6 - Level/Error,6,0,0.0,7.57631e-16
+Stage 6.9 - Adaptive Bootstrap,6,2,2.759992,
+Stage 6.10 - Accuracy Validation,2,1,1.883093,1.291041e-15

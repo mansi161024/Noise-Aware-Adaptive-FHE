@@ -1,0 +1,7 @@
+Operation,Ciphertext Level,Operations Since Bootstrap,Remaining Capacity,Adaptive Condition,Decision
+1,1,1,5,SAFE,CONTINUE
+2,2,2,4,SAFE,CONTINUE
+3,3,3,3,HIGH,BOOTSTRAP
+4,4,1,2,SAFE,CONTINUE
+5,5,2,1,SAFE,CONTINUE
+6,6,3,0,HIGH,BOOTSTRAP

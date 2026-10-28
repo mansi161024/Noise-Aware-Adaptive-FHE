@@ -1,0 +1,17 @@
+Experiment,Operations,Threshold,Bootstrap Count,Bootstrap Time,Final Level,Maximum Absolute Error,Total Execution Time
+No Bootstrapping,4,,0,0.0,4,1.163922e-15,0.33887
+No Bootstrapping,6,,0,0.0,6,1.163922e-15,0.381611
+No Bootstrapping,8,,0,0.0,8,1.241751e-15,0.206767
+No Bootstrapping,10,,0,0.0,10,1.055562e-15,0.165543
+Fixed Bootstrapping,4,2,2,3.149504022,4,1.097921e-15,4.118179
+Fixed Bootstrapping,6,2,3,5.1923,6,2.179381e-15,5.1923
+Fixed Bootstrapping,8,2,4,8.027879,8,1.432869e-15,8.027879
+Fixed Bootstrapping,10,2,5,10.830837,10,1.199597e-15,10.830837
+Adaptive Bootstrapping,4,2,2,3.205324974,4,8.935221902609504e-16,4.064881469999818
+Adaptive Bootstrapping,4,3,1,2.161068671,4,6.463752401690735e-16,3.15539284700003
+Adaptive Bootstrapping,4,4,1,2.178310515,4,1.6701830064673776e-15,2.8768477229998553
+Adaptive Bootstrapping,6,2,3,0.0,6,8.826998e-16,9.44211
+Adaptive Bootstrapping,6,3,2,0.0,6,8.022355e-16,6.633301
+Adaptive Bootstrapping,6,4,1,0.0,6,1.682798e-15,5.164665
+Adaptive Bootstrapping,8,2,4,0.0,8,1.729477e-15,12.577176
+Adaptive Bootstrapping,8,3,2,0.0,8,1.526703e-15,8.572425
