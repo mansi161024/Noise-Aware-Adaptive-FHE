@@ -1434,15 +1434,119 @@ td strong {
   word-break: break-all;
 }
 
-/* Charts row */
-.charts-row {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 20px;
-  padding: 10px 0;
+/* Charts row & Responsive Bar Charts */
+.comparison-card {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  padding: 18px 14px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
-@media (max-width: 1100px) {
+.comparison-card .panel-kicker {
+  margin-bottom: 8px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: #7b94b8;
+}
+
+.charts-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  padding: 10px 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.charts-row .bar-chart {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-around;
+  gap: 10px;
+  min-height: 230px;
+  height: 240px;
+  padding: 16px 4px 6px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.charts-row .bar-column {
+  flex: 1;
+  max-width: 80px;
+  min-width: 45px;
+  width: auto;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  box-sizing: border-box;
+}
+
+.charts-row .bar-value {
+  min-height: 20px;
+  color: #c0cee4;
+  font-family: monospace;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-align: center;
+  line-height: 1.2;
+}
+
+.charts-row .bar-container {
+  width: 100%;
+  max-width: 42px;
+  height: 155px;
+  display: flex;
+  align-items: flex-end;
+  border-radius: 8px 8px 3px 3px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  overflow: hidden;
+}
+
+.charts-row .bar {
+  width: 100%;
+  min-height: 4px;
+  border-radius: 6px 6px 0 0;
+  transition: height 0.4s ease;
+}
+
+.charts-row .bar.none {
+  background: linear-gradient(180deg, #8ba0c4, #5a739c);
+}
+
+.charts-row .bar.fixed {
+  background: linear-gradient(180deg, #e5b158, #b88636);
+}
+
+.charts-row .bar.adaptive {
+  background: linear-gradient(180deg, #7c9bf6, #4e6fd0);
+}
+
+.charts-row .bar-label {
+  margin-top: 6px;
+  color: #7d8ea6;
+  font-size: 11px;
+  font-weight: 500;
+  text-align: center;
+  white-space: nowrap;
+}
+
+@media (max-width: 1080px) {
+  .charts-row {
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 16px;
+  }
+}
+
+@media (max-width: 640px) {
   .charts-row {
     grid-template-columns: 1fr;
   }

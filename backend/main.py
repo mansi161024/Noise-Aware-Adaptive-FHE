@@ -97,23 +97,58 @@ _jobs: Dict[str, Dict[str, Any]] = {}
 _CSV_FIELDS = [
     "experiment_id",
     "timestamp",
+    "policy",
     "strategy",
+    "input_values",
     "input_data",
     "operations",
     "fixed_interval",
     "adaptive_threshold",
+    "threshold",
     "controller_type",
     "bootstrap_count",
+    "bootstrap_time",
     "total_bootstrap_time",
     "encrypt_time",
     "compute_time",
     "decrypt_time",
+    "execution_time",
     "total_execution_time",
     "maximum_absolute_error",
+    "final_level",
     "final_ciphertext_level",
     "status",
+    "failure_reason",
     "error_message",
 ]
+
+
+# ============================================================
+# POLICY NORMALIZATION
+# ============================================================
+
+def normalize_policy_name(policy_str: Optional[str]) -> str:
+    """
+    Normalizes any policy variant to one of:
+    - 'No Bootstrapping'
+    - 'Fixed Bootstrapping'
+    - 'Adaptive Bootstrapping'
+    
+    Never falls back to Adaptive.
+    """
+    if not policy_str:
+        return "No Bootstrapping"
+    p = policy_str.strip().lower().replace("-", "_").replace(" ", "_")
+    if "no" in p or "none" in p:
+        return "No Bootstrapping"
+    if "fix" in p:
+        return "Fixed Bootstrapping"
+    if "adapt" in p:
+        return "Adaptive Bootstrapping"
+    raise ValueError(
+        f"Unknown bootstrapping policy: '{policy_str}'. "
+        "Supported policies: 'no_bootstrap', 'fixed', 'adaptive'."
+    )
 
 
 # ============================================================
@@ -169,19 +204,76 @@ def _read_history_csv() -> list:
 def _persist_result(experiment_id: str, result: dict) -> dict:
     """
     Enrich a raw experiment result with metadata and persist to storage.
-    Returns the enriched record.
+    Guarantees all required fields from user specification are present:
+    - experiment_id
+    - policy
+    - timestamp
+    - input_values
+    - operations
+    - fixed_interval
+    - adaptive_threshold
+    - bootstrap_count
+    - bootstrap_time
+    - execution_time
+    - final_level
+    - maximum_absolute_error
+    - expected_output
+    - decrypted_output
+    - status
+    - failure_reason
     """
     timestamp = time.strftime("%Y-%m-%dT%H:%M:%S")
 
+    raw_policy = result.get("policy") or result.get("strategy")
+    canonical_policy = normalize_policy_name(raw_policy)
+
+    input_vals = result.get("input_values") or result.get("input_data") or []
+    expected_out = result.get("expected_output") or result.get("expected_values") or []
+    decrypted_out = result.get("decrypted_output") or result.get("decrypted_values") or []
+
+    b_time = result.get("bootstrap_time", result.get("total_bootstrap_time", 0.0))
+    exec_time = result.get("execution_time", result.get("total_execution_time", 0.0))
+    f_level = result.get("final_level", result.get("final_ciphertext_level"))
+    fail_reason = result.get("failure_reason", result.get("error_message"))
+
     record = {
-        "experiment_id"  : experiment_id,
-        "timestamp"      : timestamp,
-        **result,
+        "experiment_id"          : experiment_id,
+        "policy"                 : canonical_policy,
+        "strategy"               : canonical_policy,
+        "timestamp"              : timestamp,
+        "input_values"           : input_vals,
+        "input_data"             : input_vals,
+        "operations"             : result.get("operations", 4),
+        "fixed_interval"         : result.get("fixed_interval"),
+        "adaptive_threshold"     : result.get("adaptive_threshold"),
+        "threshold"              : result.get("threshold", result.get("adaptive_threshold")),
+        "controller_type"        : result.get("controller_type", "none"),
+        "controller_description" : result.get("controller_description"),
+        "bootstrap_count"        : result.get("bootstrap_count", 0),
+        "bootstrap_time"         : b_time,
+        "total_bootstrap_time"   : b_time,
+        "execution_time"         : exec_time,
+        "total_execution_time"   : exec_time,
+        "encrypt_time"           : result.get("encrypt_time", 0.0),
+        "compute_time"           : result.get("compute_time", 0.0),
+        "decrypt_time"           : result.get("decrypt_time", 0.0),
+        "final_level"            : f_level,
+        "final_ciphertext_level" : f_level,
+        "maximum_absolute_error" : result.get("maximum_absolute_error"),
+        "expected_output"        : expected_out,
+        "expected_values"        : expected_out,
+        "decrypted_output"       : decrypted_out,
+        "decrypted_values"       : decrypted_out,
+        "status"                 : result.get("status", "success"),
+        "failure_reason"         : fail_reason,
+        "error_message"          : fail_reason,
+        "operation_data"         : result.get("operation_data", []),
     }
 
     # Flatten input_data for CSV
     csv_record = dict(record)
-    csv_record["input_data"] = json.dumps(record.get("input_data", []))
+    csv_record["input_data"] = json.dumps(record["input_data"])
+    csv_record["input_values"] = json.dumps(record["input_values"])
     _append_to_csv(csv_record)
 
     # Full record (including operation_data) goes to JSONL
@@ -195,19 +287,24 @@ def _persist_result(experiment_id: str, result: dict) -> dict:
 # ============================================================
 
 class RunRequest(BaseModel):
-    input_data: List[float] = Field(..., min_length=1, max_length=64)
+    input_data: Optional[List[float]] = None
+    input_values: Optional[List[float]] = None
     operations: int          = Field(..., ge=1, le=32)
-    policy: str              = Field(default="No Bootstrap")
+    policy: Optional[str]    = None
+    strategy: Optional[str]  = None
     fixed_interval: int      = Field(default=2, ge=1, le=32)
     threshold: int           = Field(default=2, ge=1, le=32)
+    adaptive_threshold: Optional[int] = None
     normalize: bool          = Field(default=False)
 
 
 class RunAllRequest(BaseModel):
-    input_data: List[float] = Field(..., min_length=1, max_length=64)
+    input_data: Optional[List[float]] = None
+    input_values: Optional[List[float]] = None
     operations: int          = Field(..., ge=1, le=32)
     fixed_interval: int      = Field(default=2, ge=1, le=32)
     threshold: int           = Field(default=2, ge=1, le=32)
+    adaptive_threshold: Optional[int] = None
     normalize: bool          = Field(default=False)
 
 
@@ -221,32 +318,39 @@ def _run_single_job(job_id: str, request: RunRequest) -> None:
     _jobs[job_id]["started_at"] = time.perf_counter()
 
     try:
-        policy     = request.policy
-        input_data = list(request.input_data)
+        raw_policy = request.policy or request.strategy or "No Bootstrapping"
+        norm_policy = normalize_policy_name(raw_policy)
+        raw_input = request.input_values or request.input_data
+        if not raw_input:
+            raise ValueError("Input vector cannot be empty.")
+        input_data = list(raw_input)
         ops        = request.operations
-        threshold  = request.threshold
+        threshold  = request.adaptive_threshold if request.adaptive_threshold is not None else request.threshold
         interval   = request.fixed_interval
 
-        if policy == "No Bootstrap":
+        if norm_policy == "No Bootstrapping":
             result = run_no_bootstrap_experiment(
                 input_data=input_data,
                 number_of_operations=ops,
             )
-        elif policy == "Fixed Bootstrap":
+        elif norm_policy == "Fixed Bootstrapping":
             result = run_fixed_bootstrap_experiment(
                 input_data=input_data,
                 number_of_operations=ops,
                 fixed_interval=interval,
             )
-        else:
+        elif norm_policy == "Adaptive Bootstrapping":
             result = run_adaptive_experiment(
                 input_data=input_data,
                 number_of_operations=ops,
                 operation_threshold=threshold,
             )
+        else:
+            raise ValueError(f"Unknown policy: {raw_policy}")
 
         record = _persist_result(job_id, result)
         _jobs[job_id]["status"] = "done"
+        _jobs[job_id]["policy"] = norm_policy
         _jobs[job_id]["result"] = record
 
     except Exception as exc:
@@ -262,11 +366,17 @@ def _run_all_job(job_id: str, request: RunAllRequest) -> None:
     _jobs[job_id]["started_at"] = time.perf_counter()
 
     try:
+        raw_input = request.input_values or request.input_data
+        if not raw_input:
+            raise ValueError("Input vector cannot be empty.")
+        input_data = list(raw_input)
+        threshold = request.adaptive_threshold if request.adaptive_threshold is not None else request.threshold
+
         results_dict = run_all_experiments(
-            input_data=list(request.input_data),
+            input_data=input_data,
             number_of_operations=request.operations,
             fixed_interval=request.fixed_interval,
-            adaptive_threshold=request.threshold,
+            adaptive_threshold=threshold,
         )
 
         # Generate one experiment_id per strategy

@@ -45,19 +45,20 @@ type Strategy =
 type JobStatus = "queued" | "running" | "done" | "failed";
 
 interface OperationData {
-  operation            : number;
-  operation_type?      : string;
-  ciphertext_level     : number;
-  level_before?        : number;
-  level_after?         : number;
-  remaining_levels?    : number;
-  indicator_value?     : number;
-  indicator_name?      : string;
-  configured_threshold?: number;
-  condition?           : string;
-  decision             : string;
-  bootstrap_triggered? : boolean;
-  bootstrap_time       : number;
+  operation                  : number;
+  operation_type?            : string;
+  ciphertext_level           : number;
+  level_before?              : number;
+  level_after?               : number;
+  remaining_levels?          : number;
+  indicator_value?           : number;
+  indicator_name?            : string;
+  configured_threshold?      : number;
+  condition?                 : string;
+  decision                   : string;
+  bootstrap_triggered?       : boolean;
+  bootstrap_time             : number;
+  operations_since_bootstrap?: number;
 }
 
 interface ExperimentResult {
@@ -146,6 +147,35 @@ async function submitRunAllJob(
   return data.job_id;
 }
 
+/** Submit a single-strategy job; returns the job_id immediately */
+async function submitRunJob(
+  strategy     : Strategy,
+  inputData    : number[],
+  operations   : number,
+  fixedInterval: number,
+  threshold    : number
+): Promise<string> {
+  const data = await apiFetch<{ success: boolean; job_id: string; message?: string }>(
+    "/api/experiments/run",
+    {
+      method : "POST",
+      body   : JSON.stringify({
+        strategy          : strategy,
+        policy            : strategy,
+        input_data        : inputData,
+        operations        : operations,
+        fixed_interval    : fixedInterval,
+        threshold         : threshold,
+        adaptive_threshold: threshold,
+      }),
+    }
+  );
+  if (!data.success || !data.job_id) {
+    throw new Error("Backend did not return a job_id.");
+  }
+  return data.job_id;
+}
+
 /** Poll job status. Returns status and results when done. */
 async function pollJob(jobId: string): Promise<{
   status : JobStatus;
@@ -185,7 +215,7 @@ async function fetchHistory(
 
 function formatTime(v?: number | null): string {
   if (v == null || !Number.isFinite(v)) return "—";
-  return `${v.toFixed(3)} s`;
+  return `${v.toFixed(2)} s`;
 }
 
 function formatError(v?: number | null): string {
@@ -301,28 +331,36 @@ function CiphertextGraph({
   const gW = W - pL - pR;
   const gH = H - pT - pB;
 
+  const minLevel = 1;
   const maxLevel = Math.max(...data.map((d) => d.ciphertext_level), 1);
+  const minOp    = 1;
   const maxOp    = Math.max(...data.map((d) => d.operation), 1);
 
   const pts = data.map((d) => ({
     ...d,
-    x : pL + ((d.operation - 1) / Math.max(maxOp - 1, 1)) * gW,
-    y : pT + gH - (d.ciphertext_level / maxLevel) * gH,
+    x : pL + ((d.operation - minOp) / Math.max(maxOp - minOp, 1)) * gW,
+    y : (H - pB) - ((d.ciphertext_level - minLevel) / Math.max(maxLevel - minLevel, 1)) * gH,
   }));
 
   const poly = pts.map((p) => `${p.x},${p.y}`).join(" ");
+
+  // Grid line levels
+  const levelCount = maxLevel - minLevel + 1;
+  const levelStep = levelCount > 28 ? (levelCount > 40 ? 5 : 2) : 1;
 
   return (
     <div className="graph-wrapper">
       <svg viewBox={`0 0 ${W} ${H}`} className="graph">
         {/* Grid lines */}
-        {Array.from({ length: maxLevel + 1 }).map((_, i) => {
-          const y = pT + gH - (i / maxLevel) * gH;
+        {Array.from({ length: levelCount }).map((_, idx) => {
+          const lvl = minLevel + idx;
+          if (lvl !== minLevel && lvl !== maxLevel && lvl % levelStep !== 0) return null;
+          const y = (H - pB) - ((lvl - minLevel) / Math.max(maxLevel - minLevel, 1)) * gH;
           return (
-            <g key={`g${i}`}>
+            <g key={`g${lvl}`}>
               <line x1={pL} y1={y} x2={W - pR} y2={y} className="grid-line" />
               <text x={pL - 8} y={y + 4} textAnchor="end" className="axis-text">
-                {i}
+                {lvl}
               </text>
             </g>
           );
@@ -333,11 +371,15 @@ function CiphertextGraph({
         <line x1={pL} y1={pT}     x2={pL}      y2={H - pB} className="axis-line" />
 
         {/* X labels */}
-        {pts.map((p) => (
-          <text key={`xl${p.operation}`} x={p.x} y={H - 25} textAnchor="middle" className="axis-text">
-            {p.operation}
-          </text>
-        ))}
+        {pts.map((p) => {
+          const opStep = maxOp > 28 ? (maxOp > 40 ? 5 : 2) : 1;
+          if (p.operation !== minOp && p.operation !== maxOp && p.operation % opStep !== 0) return null;
+          return (
+            <text key={`xl${p.operation}`} x={p.x} y={H - 25} textAnchor="middle" className="axis-text">
+              {p.operation}
+            </text>
+          );
+        })}
 
         {/* Line */}
         <polyline points={poly} className="graph-line" fill="none" />
@@ -351,12 +393,12 @@ function CiphertextGraph({
               <circle
                 cx={p.x}
                 cy={p.y}
-                r="5"
+                r={isBS ? 5 : 4}
                 className={isBS ? "bootstrap-point" : "normal-point"}
               />
               {isBS && (
                 <text x={p.x} y={p.y - 14} textAnchor="middle" className="bootstrap-label">
-                  BOOT
+                  BOOTSTRAP
                 </text>
               )}
             </g>
@@ -374,7 +416,7 @@ function CiphertextGraph({
           transform={`rotate(-90 14 ${H / 2})`}
           className="axis-title"
         >
-          Level
+          Ciphertext Level
         </text>
       </svg>
 
@@ -423,7 +465,7 @@ function ComparisonBarGraph({
   };
 
   return (
-    <div>
+    <div className="comparison-card">
       <div className="panel-kicker">{title}</div>
       <div className="bar-chart">
         {results.map((r, i) => {
@@ -456,7 +498,6 @@ function DashboardPage({
   summary,
   history,
   latestExperiment,
-  compareResults,
   backendOnline,
   onNewExperiment,
   onDetails,
@@ -466,7 +507,6 @@ function DashboardPage({
   summary          : Summary | null;
   history          : ExperimentResult[];
   latestExperiment : ExperimentResult | null;
-  compareResults   : ExperimentResult[];
   backendOnline    : boolean;
   onNewExperiment  : () => void;
   onDetails        : () => void;
@@ -615,7 +655,7 @@ function DashboardPage({
               <h2>Experiment History</h2>
             </div>
             <button className="link-button" onClick={onHistory}>
-              View All →
+              View All History →
             </button>
           </div>
           <div className="table-container">
@@ -653,23 +693,6 @@ function DashboardPage({
                 ))}
               </tbody>
             </table>
-          </div>
-        </div>
-      )}
-
-      {/* Comparison graphs from compare results */}
-      {compareResults.length >= 2 && (
-        <div className="panel">
-          <div className="panel-heading">
-            <div>
-              <div className="panel-kicker">COMPARISON CHARTS</div>
-              <h2>Strategy Comparison</h2>
-            </div>
-          </div>
-          <div className="charts-row">
-            <ComparisonBarGraph results={compareResults} metric="time"      title="Execution Time" />
-            <ComparisonBarGraph results={compareResults} metric="bootstrap" title="Bootstrap Count" />
-            <ComparisonBarGraph results={compareResults} metric="error"     title="Max Absolute Error" />
           </div>
         </div>
       )}
@@ -714,7 +737,7 @@ function computeSafeOps(maxAbs: number): number {
 function NewExperimentPage({
   onComplete,
 }: {
-  onComplete: (results: ExperimentResult[]) => void;
+  onComplete: (results: ExperimentResult[], isAll?: boolean) => void;
 }) {
   const [inputText,    setInputText]    = useState("0.1, 0.2, 0.3, 0.4");
   const [operations,   setOperations]   = useState(4);
@@ -726,7 +749,7 @@ function NewExperimentPage({
   const [jobStatus,    setJobStatus]    = useState<JobStatus | null>(null);
   const [running,      setRunning]      = useState(false);
   const [error,        setError]        = useState("");
-  const [runAllMode,   setRunAllMode]   = useState(true);
+  const [runAllMode,   setRunAllMode]   = useState(false);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -781,7 +804,7 @@ function NewExperimentPage({
 
   /* Start polling a job */
   const startPolling = useCallback(
-    (id: string) => {
+    (id: string, isAll: boolean) => {
       stopPolling();
       pollRef.current = setInterval(async () => {
         try {
@@ -792,7 +815,7 @@ function NewExperimentPage({
             stopPolling();
             setRunning(false);
             if (status.results && status.results.length > 0) {
-              onComplete(status.results);
+              onComplete(status.results, isAll);
             } else {
               setError("Experiment finished but no results were returned.");
             }
@@ -833,7 +856,7 @@ function NewExperimentPage({
       );
       return;
     }
-    if (strategy === "Fixed Bootstrap") {
+    if (!runAllMode && strategy === "Fixed Bootstrap") {
       if (fixedAfter < 1 || fixedAfter > operations) {
         setError(
           `Fixed interval must be between 1 and ${operations}.`
@@ -841,7 +864,7 @@ function NewExperimentPage({
         return;
       }
     }
-    if (strategy === "Adaptive Bootstrap") {
+    if (!runAllMode && strategy === "Adaptive Bootstrap") {
       if (threshold < 1) {
         setError("Adaptive threshold must be at least 1.");
         return;
@@ -852,16 +875,14 @@ function NewExperimentPage({
       setRunning(true);
       setJobStatus("queued");
 
-      const id = await submitRunAllJob(
-        inputData,
-        operations,
-        fixedAfter,
-        threshold
-      );
+      const isAll = runAllMode;
+      const id = isAll
+        ? await submitRunAllJob(inputData, operations, fixedAfter, threshold)
+        : await submitRunJob(strategy, inputData, operations, fixedAfter, threshold);
 
       setJobId(id);
       setJobStatus("running");
-      startPolling(id);
+      startPolling(id, isAll);
     } catch (e: any) {
       setRunning(false);
       setJobStatus(null);
@@ -873,6 +894,7 @@ function NewExperimentPage({
     fixedAfter,
     threshold,
     strategy,
+    runAllMode,
     expectedMax,
     safeOps,
     startPolling,
@@ -1170,9 +1192,11 @@ function HistoryPage({
 
 function DetailsPage({
   experiment,
+  history = [],
   onBack,
 }: {
   experiment : ExperimentResult | null;
+  history?   : ExperimentResult[];
   onBack     : () => void;
 }) {
   if (!experiment) {
@@ -1180,8 +1204,8 @@ function DetailsPage({
       <div className="page">
         <EmptyState
           title="No experiment selected"
-          message="Select an experiment from the history page."
-          action={<button className="primary-button" onClick={onBack}>Go Back</button>}
+          message="Select an experiment or run a new one."
+          action={<button className="primary-button" onClick={onBack}>Go to Dashboard</button>}
         />
       </div>
     );
@@ -1189,19 +1213,28 @@ function DetailsPage({
 
   const isFailed = experiment.status === "failed";
 
+  const expNum = useMemo(() => {
+    if (!experiment) return "EXP-001";
+    if (experiment.experiment_id && experiment.experiment_id.startsWith("EXP-")) {
+      return experiment.experiment_id;
+    }
+    const idx = history.findIndex((h) => h.experiment_id === experiment.experiment_id);
+    if (idx >= 0) {
+      return `EXP-${String(history.length - idx).padStart(3, "0")}`;
+    }
+    return "EXP-001";
+  }, [experiment, history]);
+
   return (
     <div className="page">
       <div className="page-header compact">
         <div>
           <div className="eyebrow">EXPERIMENT DETAILS</div>
-          <h1>{experiment.strategy}</h1>
-          <p>
-            {experiment.timestamp && `Recorded: ${formatDate(experiment.timestamp)}`}
-            {experiment.experiment_id && ` | ID: ${experiment.experiment_id.slice(0, 8)}…`}
-          </p>
+          <h1>Experiment #{expNum}</h1>
+          <p>Detailed CKKS computation and adaptive decision trace.</p>
         </div>
         <StatusBadge type={isFailed ? "danger" : "success"}>
-          {experiment.status}
+          {isFailed ? "Failed" : "Completed"}
         </StatusBadge>
       </div>
 
@@ -1211,55 +1244,13 @@ function DetailsPage({
         </div>
       )}
 
-      {/* Metrics */}
+      {/* Metrics - 5 cards */}
       <div className="detail-top-grid">
-        <StatCard title="Policy"           value={strategyShort(experiment.strategy)} />
-        <StatCard title="Operations"       value={experiment.operations} />
-        <StatCard title="Execution Time"   value={formatTime(experiment.total_execution_time)} />
-        <StatCard title="Bootstrap Count"  value={experiment.bootstrap_count} />
-        <StatCard title="Max Error"        value={formatError(experiment.maximum_absolute_error)} />
-        <StatCard title="Final Level"      value={experiment.final_ciphertext_level ?? "—"} />
-        {experiment.encrypt_time != null && (
-          <StatCard title="Encrypt Time"   value={formatTime(experiment.encrypt_time)} />
-        )}
-        {experiment.compute_time != null && (
-          <StatCard title="Compute Time"   value={formatTime(experiment.compute_time)} />
-        )}
-        {experiment.decrypt_time != null && (
-          <StatCard title="Decrypt Time"   value={formatTime(experiment.decrypt_time)} />
-        )}
-      </div>
-
-      {/* Controller info */}
-      <div className="panel">
-        <div className="panel-heading">
-          <div>
-            <div className="panel-kicker">CKKS CONFIGURATION</div>
-            <h2>Experiment Parameters</h2>
-          </div>
-        </div>
-        <div className="config-table">
-          <div><span>Strategy</span><span>{experiment.strategy}</span></div>
-          <div><span>Controller Type</span><span>{experiment.controller_type ?? "—"}</span></div>
-          {experiment.controller_description && (
-            <div><span>Controller Note</span><span>{experiment.controller_description}</span></div>
-          )}
-          {experiment.fixed_interval != null && (
-            <div><span>Fixed Interval</span><span>{experiment.fixed_interval}</span></div>
-          )}
-          {experiment.adaptive_threshold != null && (
-            <div><span>Adaptive Threshold</span><span>{experiment.adaptive_threshold}</span></div>
-          )}
-          <div>
-            <span>Input Vector</span>
-            <span>{(experiment.input_data ?? []).join(", ")}</span>
-          </div>
-          <div><span>Input Count</span><span>{(experiment.input_data ?? []).length}</span></div>
-          <div><span>Ring Dimension</span><span>4096</span></div>
-          <div><span>Scaling Mod Size</span><span>59 bits</span></div>
-          <div><span>Multiplicative Depth</span><span>32</span></div>
-          <div><span>NumSlots</span><span>2048</span></div>
-        </div>
+        <StatCard title="Policy"          value={strategyShort(experiment.strategy)} />
+        <StatCard title="Operations"      value={experiment.operations} />
+        <StatCard title="Execution Time"  value={formatTime(experiment.total_execution_time)} />
+        <StatCard title="Bootstrap Count" value={experiment.bootstrap_count} />
+        <StatCard title="Maximum Error"   value={formatError(experiment.maximum_absolute_error)} />
       </div>
 
       {/* Ciphertext level graph */}
@@ -1268,7 +1259,7 @@ function DetailsPage({
           <div className="panel-heading">
             <div>
               <div className="panel-kicker">CIPHERTEXT CONDITION</div>
-              <h2>Level vs Operation</h2>
+              <h2>Ciphertext Level by Operation</h2>
             </div>
           </div>
           <CiphertextGraph experiment={experiment} />
@@ -1280,101 +1271,38 @@ function DetailsPage({
         <div className="panel">
           <div className="panel-heading">
             <div>
-              <div className="panel-kicker">DECISION LOG</div>
-              <h2>Per-Operation Trace</h2>
+              <div className="panel-kicker">ADAPTIVE DECISIONS</div>
+              <h2>Operation-by-Operation Trace</h2>
             </div>
           </div>
           <div className="table-container">
             <table>
               <thead>
                 <tr>
-                  <th>Op #</th>
-                  <th>Type</th>
-                  <th>Level Before</th>
-                  <th>Level After</th>
-                  {experiment.operation_data[0]?.remaining_levels != null && (
-                    <th>Remaining</th>
-                  )}
-                  {experiment.operation_data[0]?.condition != null && (
-                    <th>Condition</th>
-                  )}
-                  {experiment.operation_data[0]?.configured_threshold != null && (
-                    <th>Threshold</th>
-                  )}
+                  <th>Operation</th>
+                  <th>Ciphertext Level</th>
+                  <th>Operations Since Bootstrap</th>
                   <th>Decision</th>
                   <th>Bootstrap Time</th>
                 </tr>
               </thead>
               <tbody>
-                {experiment.operation_data.map((row) => (
-                  <tr key={row.operation}>
-                    <td>{row.operation}</td>
-                    <td>{row.operation_type ?? "EvalMult"}</td>
-                    <td>{row.level_before ?? row.ciphertext_level}</td>
-                    <td>{row.level_after  ?? row.ciphertext_level}</td>
-                    {row.remaining_levels != null && (
-                      <td>{row.remaining_levels}</td>
-                    )}
-                    {row.condition != null && (
+                {experiment.operation_data.map((row, idx) => {
+                  const isBS = row.decision === "BOOTSTRAP";
+                  const opsSince = row.operations_since_bootstrap != null
+                    ? row.operations_since_bootstrap
+                    : (isBS ? 0 : row.operation);
+                  return (
+                    <tr key={row.operation ?? idx}>
+                      <td>{row.operation}</td>
+                      <td>{row.ciphertext_level}</td>
+                      <td>{opsSince}</td>
                       <td>
-                        <span className={`cond-badge ${row.condition === "HIGH-RISK" ? "highrisk" : "safe"}`}>
-                          {row.condition}
+                        <span className={`decision-badge ${isBS ? "boot" : "cont"}`}>
+                          ● {row.decision}
                         </span>
                       </td>
-                    )}
-                    {row.configured_threshold != null && (
-                      <td>{row.configured_threshold}</td>
-                    )}
-                    <td>
-                      <span className={`decision-badge ${row.decision === "BOOTSTRAP" ? "boot" : "cont"}`}>
-                        {row.decision}
-                      </span>
-                    </td>
-                    <td>
-                      {row.bootstrap_time > 0
-                        ? formatTime(row.bootstrap_time)
-                        : "—"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Numerical results */}
-      {experiment.expected_values &&
-        experiment.expected_values.length > 0 && (
-        <div className="panel">
-          <div className="panel-heading">
-            <div>
-              <div className="panel-kicker">NUMERICAL ACCURACY</div>
-              <h2>Expected vs Decrypted Values</h2>
-            </div>
-          </div>
-          <div className="table-container">
-            <table>
-              <thead>
-                <tr>
-                  <th>Index</th>
-                  <th>Input</th>
-                  <th>Expected (x^(2^N))</th>
-                  <th>Decrypted</th>
-                  <th>Absolute Error</th>
-                </tr>
-              </thead>
-              <tbody>
-                {experiment.expected_values.map((exp, idx) => {
-                  const dec = (experiment.decrypted_values ?? [])[idx];
-                  const err = dec != null ? Math.abs(exp - dec) : null;
-                  return (
-                    <tr key={idx}>
-                      <td>{idx + 1}</td>
-                      <td>{(experiment.input_data ?? [])[idx]?.toExponential(4) ?? "—"}</td>
-                      <td>{Number.isFinite(exp) ? exp.toExponential(6) : "overflow"}</td>
-                      <td>{dec != null ? dec.toExponential(6) : "—"}</td>
-                      <td>{err != null ? err.toExponential(4) : "—"}</td>
+                      <td>{row.bootstrap_time > 0 ? `${row.bootstrap_time.toFixed(2)} s` : "0.00 s"}</td>
                     </tr>
                   );
                 })}
@@ -1382,6 +1310,52 @@ function DetailsPage({
             </table>
           </div>
         </div>
+      )}
+
+      {/* Numerical results */}
+      {experiment.expected_values && experiment.expected_values.length > 0 && (
+        <>
+          <div className="accuracy-grid">
+            <div className="panel">
+              <div className="panel-kicker">EXPECTED RESULT</div>
+              <h2>Plaintext Reference</h2>
+              <div className="value-list">
+                {experiment.expected_values.map((v, i) => (
+                  <div key={i}>
+                    <span>Value {i + 1}</span>
+                    <code>{v != null ? Number(v).toExponential(6) : "0.000000e+0"}</code>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="panel">
+              <div className="panel-kicker">DECRYPTED RESULT</div>
+              <h2>CKKS Output</h2>
+              <div className="value-list">
+                {(experiment.decrypted_values ?? []).map((v, i) => (
+                  <div key={i}>
+                    <span>Value {i + 1}</span>
+                    <code>{v != null ? Number(v).toExponential(6) : "0.000000e+0"}</code>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="panel accuracy-highlight">
+            <div>
+              <div className="panel-kicker">NUMERICAL ACCURACY</div>
+              <h2>Maximum Absolute Error</h2>
+              <p>max(|expected − decrypted|)</p>
+            </div>
+            <div className="big-error">
+              {experiment.maximum_absolute_error != null
+                ? experiment.maximum_absolute_error.toExponential(3)
+                : "—"}
+            </div>
+          </div>
+        </>
       )}
     </div>
   );
@@ -1392,8 +1366,10 @@ function DetailsPage({
 ========================================================= */
 
 function ComparisonPage({
+  initialResults = [],
   onComplete,
 }: {
+  initialResults?: ExperimentResult[];
   onComplete: (results: ExperimentResult[]) => void;
 }) {
   const [inputText,  setInputText]  = useState("0.1, 0.2, 0.3, 0.4");
@@ -1401,7 +1377,14 @@ function ComparisonPage({
   const [threshold,  setThreshold]  = useState(2);
   const [fixedAfter, setFixedAfter] = useState(2);
 
-  const [results,    setResults]    = useState<ExperimentResult[]>([]);
+  const [results,    setResults]    = useState<ExperimentResult[]>(initialResults);
+
+  useEffect(() => {
+    if (initialResults.length > 0) {
+      setResults(initialResults);
+    }
+  }, [initialResults]);
+
   const [running,    setRunning]    = useState(false);
   const [jobId,      setJobId]      = useState<string | null>(null);
   const [jobStatus,  setJobStatus]  = useState<JobStatus | null>(null);
@@ -1662,30 +1645,38 @@ export default function App() {
 
   /* When an experiment run completes */
   const handleExperimentComplete = useCallback(
-    (results: ExperimentResult[]) => {
+    async (results: ExperimentResult[], isAll?: boolean) => {
+      await refreshData();
       if (results.length > 0) {
+        setSelectedExp(results[0]);
         setLatestExperiment(results[0]);
       }
-      refreshData();
-      setPage("details");
+      if (isAll || results.length > 1) {
+        setCompareResults(results);
+        setPage("history");
+      } else {
+        setPage("details");
+      }
     },
     [refreshData]
   );
 
   /* When a comparison run completes */
   const handleCompareComplete = useCallback(
-    (results: ExperimentResult[]) => {
+    async (results: ExperimentResult[]) => {
       setCompareResults(results);
-      refreshData();
+      await refreshData();
+      setPage("compare");
     },
     [refreshData]
   );
 
   const navigation = [
-    { id: "dashboard"      as Page, label: "Dashboard",        icon: "⊞" },
-    { id: "new-experiment" as Page, label: "New Experiment",   icon: "+" },
-    { id: "history"        as Page, label: "History",          icon: "☰" },
-    { id: "compare"        as Page, label: "Compare",          icon: "⇌" },
+    { id: "dashboard"      as Page, label: "Dashboard",           icon: "⌂" },
+    { id: "new-experiment" as Page, label: "New Experiment",      icon: "+" },
+    { id: "details"        as Page, label: "Experiment Details",  icon: "✦" },
+    { id: "history"        as Page, label: "Experiment History",  icon: "☰" },
+    { id: "compare"        as Page, label: "Compare Experiments", icon: "⇄" },
   ];
 
   return (
@@ -1693,12 +1684,14 @@ export default function App() {
       {/* ============ SIDEBAR ============ */}
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-mark">◈</div>
+          <div className="brand-mark">N</div>
           <div className="brand-text">
-            <strong>FHE Research</strong>
-            <span>WORKSPACE</span>
+            <strong>Noise-Aware</strong>
+            <span>Adaptive FHE</span>
           </div>
         </div>
+
+        <div className="sidebar-label">WORKSPACE</div>
 
         <nav>
           {navigation.map((item) => (
@@ -1718,11 +1711,11 @@ export default function App() {
             <span className={`connection-dot ${backendOnline ? "online" : "offline"}`} />
             <div>
               <strong>{backendOnline ? "Backend Online" : "Backend Offline"}</strong>
-              <span>{API_BASE}</span>
+              <span>3032 / 127.0.0.1:8000</span>
             </div>
           </div>
           <div className="project-info">
-            <span>OpenFHE + CKKS</span>
+            <span>OpenFHE • CKKS</span>
             <span>Research Dashboard</span>
           </div>
         </div>
@@ -1735,7 +1728,6 @@ export default function App() {
             summary={summary}
             history={history}
             latestExperiment={latestExperiment}
-            compareResults={compareResults}
             backendOnline={backendOnline}
             onNewExperiment={() => setPage("new-experiment")}
             onDetails={() => setPage("details")}
@@ -1760,13 +1752,17 @@ export default function App() {
 
         {page === "details" && (
           <DetailsPage
-            experiment={selectedExp ?? latestExperiment}
-            onBack={() => setPage("history")}
+            experiment={selectedExp ?? latestExperiment ?? (history.length > 0 ? history[0] : null)}
+            history={history}
+            onBack={() => setPage("dashboard")}
           />
         )}
 
         {page === "compare" && (
-          <ComparisonPage onComplete={handleCompareComplete} />
+          <ComparisonPage
+            initialResults={compareResults}
+            onComplete={handleCompareComplete}
+          />
         )}
       </main>
     </div>

@@ -226,24 +226,22 @@ def calculate_expected_values(
     scale_factor: float = 1.0,
 ) -> list:
     """
-    After N squarings, value x becomes x^(2^N).
-
-    If normalization was applied (scale_factor != 1.0):
-        normalized_x = x / scale_factor
-        after N squarings of normalized_x: (x/s)^(2^N)
-        Correction: multiply by s^(2^N) to recover original expected value.
+    Computes expected output step-by-step using the exact same mathematical
+    operation sequence as homomorphic computation (repeated squaring).
     """
-    exponent = 2 ** number_of_operations
-    expected = []
-    for x in input_data:
-        try:
-            val = x ** exponent
-            if not math.isfinite(val):
-                val = float("inf")
-        except OverflowError:
-            val = float("inf")
-        expected.append(val)
-    return expected
+    current_values = [float(x) for x in input_data]
+    for _ in range(number_of_operations):
+        next_values = []
+        for x in current_values:
+            try:
+                v = x * x
+                if not math.isfinite(v):
+                    v = float("inf")
+            except OverflowError:
+                v = float("inf")
+            next_values.append(v)
+        current_values = next_values
+    return current_values
 
 
 def calculate_error(
@@ -319,14 +317,15 @@ def run_no_bootstrap_experiment(
         level_after = ciphertext.GetLevel()
 
         operation_data.append({
-            "operation"            : operation,
-            "operation_type"       : "EvalMult (squaring)",
-            "ciphertext_level"     : level_after,
-            "level_before"         : level_before,
-            "level_after"          : level_after,
-            "decision"             : "CONTINUE",
-            "bootstrap_triggered"  : False,
-            "bootstrap_time"       : 0.0,
+            "operation"                  : operation,
+            "operation_type"             : "EvalMult (squaring)",
+            "ciphertext_level"           : level_after,
+            "level_before"               : level_before,
+            "level_after"                : level_after,
+            "operations_since_bootstrap" : operation,
+            "decision"                   : "CONTINUE",
+            "bootstrap_triggered"        : False,
+            "bootstrap_time"             : 0.0,
         })
 
         print(
@@ -358,24 +357,34 @@ def run_no_bootstrap_experiment(
     print(f"  Total time         : {total_time:.4f} s")
 
     return {
-        "strategy"               : "No Bootstrap",
+        "policy"                 : "No Bootstrapping",
+        "strategy"               : "No Bootstrapping",
+        "input_values"           : list(input_data),
         "input_data"             : list(input_data),
         "operations"             : number_of_operations,
         "fixed_interval"         : None,
         "adaptive_threshold"     : None,
+        "threshold"              : None,
         "controller_type"        : "none",
+        "controller_description" : "No bootstrapping performed.",
+        "expected_output"        : expected_values,
         "expected_values"        : expected_values,
+        "decrypted_output"       : list(decrypted_values),
         "decrypted_values"       : list(decrypted_values),
         "maximum_absolute_error" : max_error,
+        "final_level"            : ciphertext.GetLevel(),
         "final_ciphertext_level" : ciphertext.GetLevel(),
         "bootstrap_count"        : 0,
+        "bootstrap_time"         : 0.0,
         "total_bootstrap_time"   : 0.0,
+        "execution_time"         : total_time,
         "total_execution_time"   : total_time,
         "encrypt_time"           : encrypt_time,
         "compute_time"           : compute_time,
         "decrypt_time"           : decrypt_time,
         "operation_data"         : operation_data,
         "status"                 : "success",
+        "failure_reason"         : None,
         "error_message"          : None,
     }
 
@@ -469,8 +478,9 @@ def run_fixed_bootstrap_experiment(
     # ----------------------------------------------------------
     # Compute with fixed bootstrapping
     # ----------------------------------------------------------
+    ops_since_bootstrap = 0
     for operation in range(1, number_of_operations + 1):
-
+        ops_since_bootstrap += 1
         level_before = ciphertext.GetLevel()
 
         ciphertext = cc.EvalMult(ciphertext, ciphertext)
@@ -494,18 +504,20 @@ def run_fixed_bootstrap_experiment(
 
             total_bootstrap_time += bootstrap_time
             bootstrap_count      += 1
+            ops_since_bootstrap   = 0
 
         level_after_total = ciphertext.GetLevel()
 
         operation_data.append({
-            "operation"              : operation,
-            "operation_type"         : "EvalMult (squaring)",
-            "level_before"           : level_before,
-            "level_after"            : level_after_total,
-            "ciphertext_level"       : level_after_total,
-            "decision"               : decision,
-            "bootstrap_triggered"    : should_bootstrap,
-            "bootstrap_time"         : bootstrap_time,
+            "operation"                  : operation,
+            "operation_type"             : "EvalMult (squaring)",
+            "level_before"               : level_before,
+            "level_after"                : level_after_total,
+            "ciphertext_level"           : level_after_total,
+            "operations_since_bootstrap" : ops_since_bootstrap,
+            "decision"                   : decision,
+            "bootstrap_triggered"        : should_bootstrap,
+            "bootstrap_time"             : bootstrap_time,
         })
 
         print(
@@ -547,31 +559,41 @@ def run_fixed_bootstrap_experiment(
     print(f"  Total time           : {total_time:.4f} s")
 
     return {
-        "strategy"               : "Fixed Bootstrap",
+        "policy"                 : "Fixed Bootstrapping",
+        "strategy"               : "Fixed Bootstrapping",
+        "input_values"           : list(input_data),
         "input_data"             : list(input_data),
         "operations"             : number_of_operations,
         "fixed_interval"         : fixed_interval,
         "adaptive_threshold"     : None,
+        "threshold"              : None,
         "controller_type"        : "fixed-interval",
+        "controller_description" : f"Fixed interval controller: bootstraps every {fixed_interval} operations (except final operation).",
         "scheduled_bootstraps"   : scheduled,
+        "expected_output"        : expected_values,
         "expected_values"        : expected_values,
+        "decrypted_output"       : list(decrypted_values),
         "decrypted_values"       : list(decrypted_values),
         "maximum_absolute_error" : max_error,
+        "final_level"            : ciphertext.GetLevel(),
         "final_ciphertext_level" : ciphertext.GetLevel(),
         "bootstrap_count"        : bootstrap_count,
+        "bootstrap_time"         : total_bootstrap_time,
         "total_bootstrap_time"   : total_bootstrap_time,
+        "execution_time"         : total_time,
         "total_execution_time"   : total_time,
         "encrypt_time"           : encrypt_time,
         "compute_time"           : compute_time,
         "decrypt_time"           : decrypt_time,
         "operation_data"         : operation_data,
         "status"                 : "success",
+        "failure_reason"         : None,
         "error_message"          : None,
     }
 
 
 # ============================================================
-# 3. ADAPTIVE BOOTSTRAP  (LEVEL-AWARE CONTROLLER)
+# 3. ADAPTIVE BOOTSTRAP  (OPERATION-THRESHOLD CONTROLLER)
 # ============================================================
 
 def run_adaptive_experiment(
@@ -580,42 +602,27 @@ def run_adaptive_experiment(
     operation_threshold: int = 2,
 ) -> dict:
     """
-    Adaptive bootstrapping controlled by the remaining ciphertext level.
+    Adaptive bootstrapping controlled by an operation threshold.
 
     Controller description
     ----------------------
-    This is a LEVEL-AWARE controller.
+    Accurately labeled as an OPERATION-THRESHOLD controller.
 
-    After each operation the remaining level capacity is computed as:
-
-        remaining = (total_depth - levels_consumed_by_bootstrap) - current_level
-
-    where total_depth = 32 and bootstrap consumes 8 levels (level_budget=[4,4]).
+    The controller tracks operations executed since the last bootstrap:
+        operations_since_bootstrap += 1
 
     Bootstrap is triggered when:
+        operations_since_bootstrap >= operation_threshold
 
-        remaining <= level_threshold
-
-    This ensures bootstrapping occurs before the ciphertext runs out of
-    computational capacity, not after.
-
-    The `operation_threshold` parameter is re-interpreted as the
-    minimum remaining level below which bootstrapping fires.
-    A value of 2 means "bootstrap when ≤ 2 levels remain before
-    capacity is exhausted."
-
-    NOTE: This is NOT a direct measurement of ring noise variance.
-    OpenFHE does not expose the noise variance externally via Python
-    bindings at this time. The level is a reliable proxy for
-    multiplicative capacity and is the standard practical indicator
-    used in level-based FHE systems.
+    Upon bootstrap, ciphertext levels are refreshed and operations_since_bootstrap
+    is reset to 0.
     """
 
     print("\n" + "=" * 60)
-    print("ADAPTIVE BOOTSTRAP EXPERIMENT  (level-aware controller)")
-    print(f"  Operations       : {number_of_operations}")
-    print(f"  Level threshold  : {operation_threshold}  "
-          "(bootstrap when remaining_levels <= threshold)")
+    print("ADAPTIVE BOOTSTRAP EXPERIMENT  (operation-threshold controller)")
+    print(f"  Operations          : {number_of_operations}")
+    print(f"  Operation threshold : {operation_threshold}  "
+          "(bootstrap when operations_since_bootstrap >= threshold)")
     print("=" * 60)
 
     # ----------------------------------------------------------
@@ -625,16 +632,14 @@ def run_adaptive_experiment(
     if not check["ok"]:
         raise ValueError(check["error"])
 
+    if operation_threshold < 1:
+        raise ValueError("operation_threshold must be >= 1.")
+
     # ----------------------------------------------------------
     # Context & keys
     # ----------------------------------------------------------
     cc = create_context(use_bootstrap=True)
     keys = generate_keys(cc, use_bootstrap=True)
-
-    # Level budget consumed by one bootstrap call
-    _BOOTSTRAP_DEPTH   = 8   # = sum(level_budget) = 4 + 4
-    _TOTAL_DEPTH       = 32
-    _LEVELS_AFTER_BOOT = _TOTAL_DEPTH - _BOOTSTRAP_DEPTH  # 24
 
     # ----------------------------------------------------------
     # Encrypt
@@ -645,6 +650,7 @@ def run_adaptive_experiment(
     ciphertext = cc.Encrypt(keys.publicKey, plaintext)
     encrypt_time = time.perf_counter() - start_encrypt
 
+    operations_since_bootstrap = 0
     bootstrap_count      = 0
     total_bootstrap_time = 0.0
     operation_data       = []
@@ -653,7 +659,7 @@ def run_adaptive_experiment(
     start_compute = time.perf_counter()
 
     # ----------------------------------------------------------
-    # Compute with adaptive bootstrapping
+    # Compute with adaptive bootstrapping (operation-threshold)
     # ----------------------------------------------------------
     for operation in range(1, number_of_operations + 1):
 
@@ -661,49 +667,46 @@ def run_adaptive_experiment(
 
         ciphertext = cc.EvalMult(ciphertext, ciphertext)
 
-        current_level    = ciphertext.GetLevel()
-        remaining_levels = _TOTAL_DEPTH - current_level
+        operations_since_bootstrap += 1
+        current_level = ciphertext.GetLevel()
 
-        # Adaptive decision: is there enough capacity for future ops?
-        is_last           = (operation == number_of_operations)
-        high_risk         = remaining_levels <= operation_threshold
-        should_bootstrap  = high_risk and not is_last
+        should_bootstrap = (operations_since_bootstrap >= operation_threshold)
+        decision         = "BOOTSTRAP" if should_bootstrap else "CONTINUE"
+        condition        = "THRESHOLD-MET" if should_bootstrap else "SAFE"
+        bootstrap_time   = 0.0
 
-        condition      = "HIGH-RISK" if high_risk else "SAFE"
-        decision       = "CONTINUE"
-        bootstrap_time = 0.0
+        ops_at_decision = operations_since_bootstrap
 
         if should_bootstrap:
-            decision = "BOOTSTRAP"
-
             bs_start = time.perf_counter()
             ciphertext = cc.EvalBootstrap(ciphertext)
             bootstrap_time = time.perf_counter() - bs_start
 
             total_bootstrap_time += bootstrap_time
             bootstrap_count      += 1
+            operations_since_bootstrap = 0
 
         level_after = ciphertext.GetLevel()
 
         operation_data.append({
-            "operation"            : operation,
-            "operation_type"       : "EvalMult (squaring)",
-            "level_before"         : level_before,
-            "level_after"          : level_after,
-            "ciphertext_level"     : level_after,
-            "remaining_levels"     : _TOTAL_DEPTH - level_after,
-            "configured_threshold" : operation_threshold,
-            "indicator_value"      : remaining_levels,
-            "indicator_name"       : "remaining_ciphertext_level",
-            "condition"            : condition,
-            "decision"             : decision,
-            "bootstrap_triggered"  : should_bootstrap,
-            "bootstrap_time"       : bootstrap_time,
+            "operation"                  : operation,
+            "operation_type"             : "EvalMult (squaring)",
+            "level_before"               : level_before,
+            "level_after"                : level_after,
+            "ciphertext_level"           : level_after,
+            "indicator_name"             : "operations_since_bootstrap",
+            "indicator_value"            : ops_at_decision,
+            "operations_since_bootstrap" : ops_at_decision,
+            "configured_threshold"       : operation_threshold,
+            "condition"                  : condition,
+            "decision"                   : decision,
+            "bootstrap_triggered"        : should_bootstrap,
+            "bootstrap_time"             : bootstrap_time,
         })
 
         print(
             f"  Op {operation:2d} | Level {level_before} → {level_after}"
-            f" | Remaining {_TOTAL_DEPTH - level_after}"
+            f" | OpsSinceBS {ops_at_decision} (Threshold {operation_threshold})"
             f" | {condition} | {decision}"
             + (f" ({bootstrap_time:.2f}s)" if should_bootstrap else "")
         )
@@ -734,28 +737,37 @@ def run_adaptive_experiment(
     print(f"  Total time           : {total_time:.4f} s")
 
     return {
-        "strategy"               : "Adaptive Bootstrap",
+        "policy"                 : "Adaptive Bootstrapping",
+        "strategy"               : "Adaptive Bootstrapping",
+        "input_values"           : list(input_data),
         "input_data"             : list(input_data),
         "operations"             : number_of_operations,
         "fixed_interval"         : None,
         "adaptive_threshold"     : operation_threshold,
-        "controller_type"        : "level-aware",
+        "threshold"              : operation_threshold,
+        "controller_type"        : "operation-threshold",
         "controller_description" : (
-            "Bootstraps when remaining ciphertext levels "
-            "<= level_threshold. Not a direct noise measurement."
+            "Operation-threshold controller: triggers bootstrap when operations "
+            "since previous bootstrap reaches configured threshold."
         ),
+        "expected_output"        : expected_values,
         "expected_values"        : expected_values,
+        "decrypted_output"       : list(decrypted_values),
         "decrypted_values"       : list(decrypted_values),
         "maximum_absolute_error" : max_error,
+        "final_level"            : ciphertext.GetLevel(),
         "final_ciphertext_level" : ciphertext.GetLevel(),
         "bootstrap_count"        : bootstrap_count,
+        "bootstrap_time"         : total_bootstrap_time,
         "total_bootstrap_time"   : total_bootstrap_time,
+        "execution_time"         : total_time,
         "total_execution_time"   : total_time,
         "encrypt_time"           : encrypt_time,
         "compute_time"           : compute_time,
         "decrypt_time"           : decrypt_time,
         "operation_data"         : operation_data,
         "status"                 : "success",
+        "failure_reason"         : None,
         "error_message"          : None,
     }
 
@@ -796,15 +808,21 @@ def run_all_experiments(
         )
     except Exception as exc:
         results["no_bootstrap"] = {
-            "strategy"               : "No Bootstrap",
+            "policy"                 : "No Bootstrapping",
+            "strategy"               : "No Bootstrapping",
             "status"                 : "failed",
+            "failure_reason"         : str(exc),
             "error_message"          : str(exc),
+            "input_values"           : list(input_data),
             "input_data"             : list(input_data),
             "operations"             : number_of_operations,
             "bootstrap_count"        : 0,
+            "bootstrap_time"         : 0.0,
             "total_bootstrap_time"   : 0.0,
+            "execution_time"         : 0.0,
             "total_execution_time"   : 0.0,
             "maximum_absolute_error" : None,
+            "final_level"            : None,
             "final_ciphertext_level" : None,
             "operation_data"         : [],
         }
@@ -818,16 +836,22 @@ def run_all_experiments(
         )
     except Exception as exc:
         results["fixed_bootstrap"] = {
-            "strategy"               : "Fixed Bootstrap",
+            "policy"                 : "Fixed Bootstrapping",
+            "strategy"               : "Fixed Bootstrapping",
             "status"                 : "failed",
+            "failure_reason"         : str(exc),
             "error_message"          : str(exc),
+            "input_values"           : list(input_data),
             "input_data"             : list(input_data),
             "operations"             : number_of_operations,
             "fixed_interval"         : fixed_interval,
             "bootstrap_count"        : 0,
+            "bootstrap_time"         : 0.0,
             "total_bootstrap_time"   : 0.0,
+            "execution_time"         : 0.0,
             "total_execution_time"   : 0.0,
             "maximum_absolute_error" : None,
+            "final_level"            : None,
             "final_ciphertext_level" : None,
             "operation_data"         : [],
         }
@@ -841,16 +865,23 @@ def run_all_experiments(
         )
     except Exception as exc:
         results["adaptive_bootstrap"] = {
-            "strategy"               : "Adaptive Bootstrap",
+            "policy"                 : "Adaptive Bootstrapping",
+            "strategy"               : "Adaptive Bootstrapping",
             "status"                 : "failed",
+            "failure_reason"         : str(exc),
             "error_message"          : str(exc),
+            "input_values"           : list(input_data),
             "input_data"             : list(input_data),
             "operations"             : number_of_operations,
             "adaptive_threshold"     : adaptive_threshold,
+            "threshold"              : adaptive_threshold,
             "bootstrap_count"        : 0,
+            "bootstrap_time"         : 0.0,
             "total_bootstrap_time"   : 0.0,
+            "execution_time"         : 0.0,
             "total_execution_time"   : 0.0,
             "maximum_absolute_error" : None,
+            "final_level"            : None,
             "final_ciphertext_level" : None,
             "operation_data"         : [],
         }
